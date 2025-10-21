@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "lan-collab"
+version = "0.1.0"
+description = "A LAN Collaboration App for real-time communication and data sharing."
+authors = ["Your Name <youremail@example.com>"]
+license = "MIT"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+pyaudio = "^0.2.11"
+opencv-python = "^4.5.3.20210927"
+pyqt5 = "^5.15.4"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
