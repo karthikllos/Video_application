@@ -1,0 +1,115 @@
+# ====================================================
+# LAN Collaboration App - Python Dependencies
+# ====================================================
+# 
+# Installation:
+#   pip install -r requirements.txt
+#
+# For development:
+#   pip install -r requirements.txt
+#   pip install pytest black pylint
+#
+# ====================================================
+
+# -------------------- Core Dependencies --------------------
+
+# Video Processing
+opencv-python>=4.8.0
+# Computer vision library for video capture, encoding, and display
+# Used by: client_video.py, client_screen_share.py, utils/video_tools.py
+
+# Audio Processing
+pyaudio>=0.2.11
+# Cross-platform audio I/O library
+# Used by: client_audio.py, utils/audio_tools.py
+# Windows users: May need to download wheel from
+#   https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio
+
+# GUI Framework
+PyQt5>=5.15.9
+# Qt5-based GUI framework
+# Used by: client_gui.py
+# Provides windowing, widgets, and event handling
+
+# -------------------- Utilities --------------------
+
+# Numerical Computing
+numpy>=1.24.0
+# Array operations and numerical processing
+# Used by: video/audio processing, compression utilities
+
+# Progress Bars
+tqdm>=4.65.0
+# Command-line progress bar library
+# Used by: client_file_transfer.py for upload/download progress
+
+# Screen Capture
+mss>=9.0.0
+# Fast cross-platform screen capture library
+# Used by: client_screen_share.py for desktop streaming
+
+# Image Processing
+Pillow>=10.0.0
+# Python Imaging Library (PIL fork)
+# Used by: screen capture, image compression, format conversion
+
+# -------------------- Optional Dependencies --------------------
+
+# Data Compression (optional, for future features)
+# zstandard>=0.21.0
+# Fast compression algorithm
+# Can be used for video/audio data compression
+
+# Networking (optional, if using advanced features)
+# requests>=2.31.0
+# HTTP library for REST APIs
+# Can be used for file server communication
+
+# -------------------- Development Dependencies --------------------
+# Uncomment if doing development work:
+
+# Testing
+# pytest>=7.4.0
+# pytest-cov>=4.1.0
+# Unit testing framework
+
+# Code Quality
+# black>=23.7.0
+# Code formatter
+# pylint>=2.17.0
+# Static code analyzer
+# flake8>=6.1.0
+# Style guide enforcement
+
+# Type Checking
+# mypy>=1.5.0
+# Static type checker
+
+# -------------------- Version Notes --------------------
+# 
+# opencv-python: 4.8.0+ for latest features and security patches
+# pyaudio: 0.2.11+ (latest stable)
+# PyQt5: 5.15.9+ for Qt5 support
+# numpy: 1.24.0+ for better performance
+# tqdm: 4.65.0+ for enhanced progress bars
+# mss: 9.0.0+ for improved screen capture
+# Pillow: 10.0.0+ for security fixes
+#
+# ====================================================
+
+# -------------------- Platform-Specific Notes --------------------
+#
+# Windows:
+#   - PyAudio may require manual wheel installation
+#   - Download from: https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio
+#   - Install with: pip install PyAudio-0.2.11-cp39-cp39-win_amd64.whl
+#
+# Linux (Ubuntu/Debian):
+#   - May need: sudo apt install python3-pyaudio portaudio19-dev
+#   - May need: sudo apt install python3-pyqt5
+#
+# macOS:
+#   - May need: brew install portaudio
+#   - Then: pip install pyaudio
+#
+# ====================================================
