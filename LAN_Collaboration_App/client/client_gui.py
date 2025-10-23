@@ -1,6 +1,6 @@
 """
-Graphical User Interface for LAN Collaboration App
-Integrates video, audio, chat, screen sharing, and file transfer
+Google Meet-style GUI for LAN Collaboration App
+Simple, clean interface with toggle buttons for video/audio
 """
 
 import sys
@@ -11,44 +11,192 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QTabWidget, QPushButton, QLabel, QTextEdit, QLineEdit,
-    QFileDialog, QProgressBar, QGroupBox, QMessageBox, QInputDialog
+    QPushButton, QLabel, QTextEdit, QLineEdit, QInputDialog,
+    QFileDialog, QMessageBox, QGroupBox, QDialog
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIcon
 
 # Add parent directory to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from shared.constants import SERVER_IP, VIDEO_PORT, AUDIO_PORT, CHAT_PORT, FILE_TRANSFER_PORT
+from shared.constants import SERVER_IP, VIDEO_PORT, AUDIO_PORT, CHAT_PORT, FILE_TRANSFER_PORT, SCREEN_SHARE_PORT
 
 # Import client modules
-try:
-    from client_video import VideoStreamer, VideoReceiver
-    from client_audio import AudioStreamer, AudioReceiver
-    from client_chat import ChatClient
-    from client_screen_share import ScreenStreamer, ScreenReceiver
-    from client_file_transfer import FileTransferClient
-except ImportError as e:
-    print(f"Warning: Could not import some modules: {e}")
+from client_video import VideoStreamer, VideoReceiver
+from client_audio import AudioStreamer, AudioReceiver
+from client_chat import ChatClient
+from client_screen_share import ScreenStreamer, ScreenReceiver
+from client_file_transfer import FileTransferClient
 
 
-class ChatSignals(QObject):
-    """Signals for thread-safe GUI updates"""
-    message_received = pyqtSignal(str)
-    status_update = pyqtSignal(str)
+class ChatDialog(QDialog):
+    """Chat dialog with message input and file attachment"""
+    
+    def __init__(self, parent, chat_client):
+        super().__init__(parent)
+        self.parent_gui = parent
+        self.chat_client = chat_client
+        
+        self.setWindowTitle("💬 Chat")
+        self.setMinimumSize(400, 200)
+        
+        self.init_ui()
+    
+    def init_ui(self):
+        """Initialize chat dialog UI"""
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        
+        # Instructions
+        info_label = QLabel("💬 Type your message or attach a file")
+        info_label.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(info_label)
+        
+        # Message input
+        self.message_input = QTextEdit()
+        self.message_input.setPlaceholderText("Type your message here...")
+        self.message_input.setMaximumHeight(100)
+        layout.addWidget(self.message_input)
+        
+        # Attachment label
+        self.attachment_label = QLabel("No file attached")
+        self.attachment_label.setStyleSheet("color: #888; font-size: 11px; font-style: italic;")
+        layout.addWidget(self.attachment_label)
+        self.attached_file = None
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        # Attach file button
+        self.btn_attach = QPushButton("📎 Attach File")
+        self.btn_attach.clicked.connect(self.attach_file)
+        self.btn_attach.setStyleSheet("""
+            QPushButton {
+                background-color: #f1f3f4;
+                color: #333;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                padding: 8px 15px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #e8eaed;
+            }
+        """)
+        button_layout.addWidget(self.btn_attach)
+        
+        button_layout.addStretch()
+        
+        # Send button
+        self.btn_send = QPushButton("📤 Send")
+        self.btn_send.clicked.connect(self.send_message)
+        self.btn_send.setStyleSheet("""
+            QPushButton {
+                background-color: #1a73e8;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 8px 20px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1557b0;
+            }
+        """)
+        button_layout.addWidget(self.btn_send)
+        
+        # Close button
+        self.btn_close = QPushButton("✕ Close Chat")
+        self.btn_close.clicked.connect(self.reject)
+        self.btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #ea4335;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 8px 15px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #c5221f;
+            }
+        """)
+        button_layout.addWidget(self.btn_close)
+        
+        layout.addLayout(button_layout)
+    
+    def attach_file(self):
+        """Attach a file to send"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select File to Attach", "", "All Files (*.*)"
+        )
+        if file_path:
+            self.attached_file = file_path
+            filename = Path(file_path).name
+            self.attachment_label.setText(f"📎 Attached: {filename}")
+            self.attachment_label.setStyleSheet("color: #1a73e8; font-size: 11px;")
+    
+    def send_message(self):
+        """Send message and/or file"""
+        message_text = self.message_input.toPlainText().strip()
+        
+        # Send text message if present
+        if message_text and self.chat_client:
+            self.chat_client.send_message(message_text)
+            self.parent_gui.log_status(f"💬 Sent: {message_text}")
+        
+        # Upload file if attached
+        if self.attached_file:
+            self.parent_gui.log_status(f"📤 Sending file: {Path(self.attached_file).name}")
+            
+            def upload_thread():
+                try:
+                    file_client = FileTransferClient(
+                        self.parent_gui.server_ip, 
+                        FILE_TRANSFER_PORT
+                    )
+                    success = file_client.upload_file(self.attached_file)
+                    
+                    if success:
+                        self.parent_gui.log_status(f"✓ File sent: {Path(self.attached_file).name}")
+                        # Notify in chat
+                        if self.chat_client:
+                            self.chat_client.send_message(
+                                f"📎 Shared file: {Path(self.attached_file).name}"
+                            )
+                    else:
+                        self.parent_gui.log_status(f"✗ File send failed")
+                except Exception as e:
+                    self.parent_gui.log_status(f"✗ File error: {e}")
+                finally:
+                    if file_client:
+                        file_client.disconnect()
+            
+            threading.Thread(target=upload_thread, daemon=True).start()
+        
+        # Clear and accept if something was sent
+        if message_text or self.attached_file:
+            self.message_input.clear()
+            self.attached_file = None
+            self.attachment_label.setText("No file attached")
+            self.attachment_label.setStyleSheet("color: #888; font-size: 11px; font-style: italic;")
+            self.accept()
+        else:
+            QMessageBox.warning(self, "Empty Message", "Please enter a message or attach a file.")
 
 
-class LANCollaborationGUI(QMainWindow):
-    """Main GUI window for LAN Collaboration App"""
+class CollaborationGUI(QMainWindow):
+    """Google Meet-style collaboration GUI"""
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("LAN Collaboration App")
-        self.setGeometry(100, 100, 900, 700)
+        self.setWindowTitle("🌐 LAN Collaboration")
+        self.setGeometry(100, 100, 800, 600)
         
         # Connection settings
-        self.server_ip = SERVER_IP
+        self.server_ip = "127.0.0.1"
         self.username = "User"
         
         # Client instances
@@ -58,284 +206,22 @@ class LANCollaborationGUI(QMainWindow):
         self.audio_receiver = None
         self.chat_client = None
         self.screen_streamer = None
-        self.screen_receiver = None
         self.file_client = None
         
-        # Threads
-        self.video_thread = None
-        self.audio_thread = None
-        self.screen_thread = None
+        # State flags
+        self.video_active = False
+        self.audio_active = False
+        self.chat_active = False
+        self.screen_active = False
         
-        # Signals
-        self.chat_signals = ChatSignals()
-        self.chat_signals.message_received.connect(self.display_chat_message)
-        self.chat_signals.status_update.connect(self.update_status)
+        # Prompt for connection details
+        self.setup_connection()
         
         # Initialize UI
         self.init_ui()
-        
-        # Prompt for username and server IP
-        self.setup_connection()
-    
-    def init_ui(self):
-        """Initialize the user interface"""
-        # Central widget
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        
-        # Main layout
-        main_layout = QVBoxLayout()
-        central_widget.setLayout(main_layout)
-        
-        # Title
-        title_label = QLabel("🌐 LAN Collaboration App")
-        title_font = QFont()
-        title_font.setPointSize(16)
-        title_font.setBold(True)
-        title_label.setFont(title_font)
-        title_label.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(title_label)
-        
-        # Connection info
-        self.connection_label = QLabel("Not connected")
-        self.connection_label.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(self.connection_label)
-        
-        # Tabs
-        self.tabs = QTabWidget()
-        main_layout.addWidget(self.tabs)
-        
-        # Create tabs
-        self.create_video_tab()
-        self.create_chat_tab()
-        self.create_screen_share_tab()
-        self.create_file_transfer_tab()
-        
-        # Status bar
-        self.status_label = QLabel("Ready")
-        main_layout.addWidget(self.status_label)
-    
-    def create_video_tab(self):
-        """Create Video/Audio tab"""
-        video_widget = QWidget()
-        layout = QVBoxLayout()
-        video_widget.setLayout(layout)
-        
-        # Video controls
-        video_group = QGroupBox("Video Streaming")
-        video_layout = QVBoxLayout()
-        video_group.setLayout(video_layout)
-        
-        btn_layout = QHBoxLayout()
-        
-        self.btn_start_video = QPushButton("📹 Start Video")
-        self.btn_start_video.clicked.connect(self.start_video)
-        btn_layout.addWidget(self.btn_start_video)
-        
-        self.btn_stop_video = QPushButton("⏹ Stop Video")
-        self.btn_stop_video.clicked.connect(self.stop_video)
-        self.btn_stop_video.setEnabled(False)
-        btn_layout.addWidget(self.btn_stop_video)
-        
-        self.btn_receive_video = QPushButton("📺 Receive Video")
-        self.btn_receive_video.clicked.connect(self.receive_video)
-        btn_layout.addWidget(self.btn_receive_video)
-        
-        video_layout.addLayout(btn_layout)
-        
-        self.video_status = QLabel("Video: Not active")
-        video_layout.addWidget(self.video_status)
-        
-        layout.addWidget(video_group)
-        
-        # Audio controls
-        audio_group = QGroupBox("Audio Streaming")
-        audio_layout = QVBoxLayout()
-        audio_group.setLayout(audio_layout)
-        
-        audio_btn_layout = QHBoxLayout()
-        
-        self.btn_start_audio = QPushButton("🎤 Start Audio")
-        self.btn_start_audio.clicked.connect(self.start_audio)
-        audio_btn_layout.addWidget(self.btn_start_audio)
-        
-        self.btn_stop_audio = QPushButton("⏹ Stop Audio")
-        self.btn_stop_audio.clicked.connect(self.stop_audio)
-        self.btn_stop_audio.setEnabled(False)
-        audio_btn_layout.addWidget(self.btn_stop_audio)
-        
-        self.btn_receive_audio = QPushButton("🔊 Receive Audio")
-        self.btn_receive_audio.clicked.connect(self.receive_audio)
-        audio_btn_layout.addWidget(self.btn_receive_audio)
-        
-        audio_layout.addLayout(audio_btn_layout)
-        
-        self.audio_status = QLabel("Audio: Not active")
-        audio_layout.addWidget(self.audio_status)
-        
-        layout.addWidget(audio_group)
-        
-        layout.addStretch()
-        
-        self.tabs.addTab(video_widget, "📹 Video/Audio")
-    
-    def create_chat_tab(self):
-        """Create Chat tab"""
-        chat_widget = QWidget()
-        layout = QVBoxLayout()
-        chat_widget.setLayout(layout)
-        
-        # Connection controls
-        conn_layout = QHBoxLayout()
-        
-        self.btn_join_chat = QPushButton("🔌 Join Chat")
-        self.btn_join_chat.clicked.connect(self.join_chat)
-        conn_layout.addWidget(self.btn_join_chat)
-        
-        self.btn_leave_chat = QPushButton("🚪 Leave Chat")
-        self.btn_leave_chat.clicked.connect(self.leave_chat)
-        self.btn_leave_chat.setEnabled(False)
-        conn_layout.addWidget(self.btn_leave_chat)
-        
-        layout.addLayout(conn_layout)
-        
-        # Chat display
-        self.chat_display = QTextEdit()
-        self.chat_display.setReadOnly(True)
-        self.chat_display.setPlaceholderText("Chat messages will appear here...")
-        layout.addWidget(self.chat_display)
-        
-        # Message input
-        input_layout = QHBoxLayout()
-        
-        self.chat_input = QLineEdit()
-        self.chat_input.setPlaceholderText("Type your message...")
-        self.chat_input.returnPressed.connect(self.send_chat_message)
-        input_layout.addWidget(self.chat_input)
-        
-        self.btn_send = QPushButton("📤 Send")
-        self.btn_send.clicked.connect(self.send_chat_message)
-        self.btn_send.setEnabled(False)
-        input_layout.addWidget(self.btn_send)
-        
-        layout.addLayout(input_layout)
-        
-        self.tabs.addTab(chat_widget, "💬 Chat")
-    
-    def create_screen_share_tab(self):
-        """Create Screen Share tab"""
-        screen_widget = QWidget()
-        layout = QVBoxLayout()
-        screen_widget.setLayout(layout)
-        
-        # Screen share controls
-        screen_group = QGroupBox("Screen Sharing")
-        screen_layout = QVBoxLayout()
-        screen_group.setLayout(screen_layout)
-        
-        btn_layout = QHBoxLayout()
-        
-        self.btn_share_screen = QPushButton("🖥️ Share Screen")
-        self.btn_share_screen.clicked.connect(self.share_screen)
-        btn_layout.addWidget(self.btn_share_screen)
-        
-        self.btn_stop_screen = QPushButton("⏹ Stop Sharing")
-        self.btn_stop_screen.clicked.connect(self.stop_screen_share)
-        self.btn_stop_screen.setEnabled(False)
-        btn_layout.addWidget(self.btn_stop_screen)
-        
-        self.btn_view_screen = QPushButton("👁️ View Screen")
-        self.btn_view_screen.clicked.connect(self.view_screen)
-        btn_layout.addWidget(self.btn_view_screen)
-        
-        screen_layout.addLayout(btn_layout)
-        
-        self.screen_status = QLabel("Screen sharing: Not active")
-        screen_layout.addWidget(self.screen_status)
-        
-        layout.addWidget(screen_group)
-        
-        # Info
-        info_label = QLabel(
-            "Screen Sharing allows you to broadcast your screen to others or view their screens.\n"
-            "Quality and FPS can be adjusted in the settings."
-        )
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-        
-        layout.addStretch()
-        
-        self.tabs.addTab(screen_widget, "🖥️ Screen Share")
-    
-    def create_file_transfer_tab(self):
-        """Create File Transfer tab"""
-        file_widget = QWidget()
-        layout = QVBoxLayout()
-        file_widget.setLayout(layout)
-        
-        # Upload section
-        upload_group = QGroupBox("Upload File")
-        upload_layout = QVBoxLayout()
-        upload_group.setLayout(upload_layout)
-        
-        file_layout = QHBoxLayout()
-        
-        self.selected_file_label = QLabel("No file selected")
-        file_layout.addWidget(self.selected_file_label)
-        
-        self.btn_select_file = QPushButton("📁 Select File")
-        self.btn_select_file.clicked.connect(self.select_file)
-        file_layout.addWidget(self.btn_select_file)
-        
-        upload_layout.addLayout(file_layout)
-        
-        self.btn_upload = QPushButton("📤 Upload File")
-        self.btn_upload.clicked.connect(self.upload_file)
-        self.btn_upload.setEnabled(False)
-        upload_layout.addWidget(self.btn_upload)
-        
-        self.upload_progress = QProgressBar()
-        self.upload_progress.setVisible(False)
-        upload_layout.addWidget(self.upload_progress)
-        
-        layout.addWidget(upload_group)
-        
-        # Download section
-        download_group = QGroupBox("Download File")
-        download_layout = QVBoxLayout()
-        download_group.setLayout(download_layout)
-        
-        dl_layout = QHBoxLayout()
-        
-        self.download_filename = QLineEdit()
-        self.download_filename.setPlaceholderText("Enter filename to download...")
-        dl_layout.addWidget(self.download_filename)
-        
-        self.btn_download = QPushButton("📥 Download")
-        self.btn_download.clicked.connect(self.download_file)
-        dl_layout.addWidget(self.btn_download)
-        
-        download_layout.addLayout(dl_layout)
-        
-        self.download_progress = QProgressBar()
-        self.download_progress.setVisible(False)
-        download_layout.addWidget(self.download_progress)
-        
-        layout.addWidget(download_group)
-        
-        # Transfer log
-        self.transfer_log = QTextEdit()
-        self.transfer_log.setReadOnly(True)
-        self.transfer_log.setPlaceholderText("File transfer history will appear here...")
-        self.transfer_log.setMaximumHeight(200)
-        layout.addWidget(self.transfer_log)
-        
-        layout.addStretch()
-        
-        self.tabs.addTab(file_widget, "📁 File Transfer")
     
     def setup_connection(self):
-        """Setup connection parameters"""
+        """Get username and server IP"""
         # Get username
         username, ok = QInputDialog.getText(
             self, "Username", "Enter your username:",
@@ -351,298 +237,428 @@ class LANCollaborationGUI(QMainWindow):
         )
         if ok and server_ip:
             self.server_ip = server_ip
+    
+    def init_ui(self):
+        """Initialize UI - Google Meet style"""
+        # Central widget
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
         
-        self.connection_label.setText(
-            f"User: {self.username} | Server: {self.server_ip}"
-        )
-    
-    # Video methods
-    def start_video(self):
-        """Start video streaming"""
-        try:
-            self.video_streamer = VideoStreamer(self.server_ip, VIDEO_PORT)
-            self.video_thread = threading.Thread(
-                target=self.video_streamer.start_streaming,
-                daemon=True
-            )
-            self.video_thread.start()
-            
-            self.video_status.setText("Video: Streaming active")
-            self.btn_start_video.setEnabled(False)
-            self.btn_stop_video.setEnabled(True)
-            self.update_status("Video streaming started")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to start video: {e}")
-    
-    def stop_video(self):
-        """Stop video streaming"""
-        if self.video_streamer:
-            self.video_streamer.stop_streaming()
-            self.video_streamer = None
+        main_layout = QVBoxLayout()
+        central_widget.setLayout(main_layout)
         
-        self.video_status.setText("Video: Not active")
-        self.btn_start_video.setEnabled(True)
-        self.btn_stop_video.setEnabled(False)
-        self.update_status("Video streaming stopped")
-    
-    def receive_video(self):
-        """Receive video stream"""
-        try:
-            self.video_receiver = VideoReceiver(VIDEO_PORT)
-            self.video_thread = threading.Thread(
-                target=self.video_receiver.start_receiving,
-                daemon=True
-            )
-            self.video_thread.start()
-            self.update_status("Receiving video stream...")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to receive video: {e}")
-    
-    # Audio methods
-    def start_audio(self):
-        """Start audio streaming"""
-        try:
-            self.audio_streamer = AudioStreamer(self.server_ip, AUDIO_PORT)
-            self.audio_thread = threading.Thread(
-                target=self.audio_streamer.start_streaming,
-                daemon=True
-            )
-            self.audio_thread.start()
-            
-            self.audio_status.setText("Audio: Streaming active")
-            self.btn_start_audio.setEnabled(False)
-            self.btn_stop_audio.setEnabled(True)
-            self.update_status("Audio streaming started")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to start audio: {e}")
-    
-    def stop_audio(self):
-        """Stop audio streaming"""
-        if self.audio_streamer:
-            self.audio_streamer.stop_streaming()
-            self.audio_streamer = None
+        # Title and connection info
+        header_layout = QVBoxLayout()
         
-        self.audio_status.setText("Audio: Not active")
-        self.btn_start_audio.setEnabled(True)
-        self.btn_stop_audio.setEnabled(False)
-        self.update_status("Audio streaming stopped")
+        title = QLabel("🌐 LAN Collaboration")
+        title_font = QFont()
+        title_font.setPointSize(18)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        title.setAlignment(Qt.AlignCenter)
+        header_layout.addWidget(title)
+        
+        self.connection_label = QLabel(f"👤 {self.username} | 🖥️ {self.server_ip}")
+        self.connection_label.setAlignment(Qt.AlignCenter)
+        self.connection_label.setStyleSheet("color: #666; font-size: 12px;")
+        header_layout.addWidget(self.connection_label)
+        
+        main_layout.addLayout(header_layout)
+        main_layout.addSpacing(20)
+        
+        # Main control panel (like Google Meet bottom bar)
+        controls_group = QGroupBox("Meeting Controls")
+        controls_group.setStyleSheet("""
+            QGroupBox {
+                font-size: 14px;
+                font-weight: bold;
+                border: 2px solid #ddd;
+                border-radius: 10px;
+                margin-top: 10px;
+                padding: 20px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """)
+        controls_layout = QHBoxLayout()
+        controls_group.setLayout(controls_layout)
+        
+        # Video toggle button
+        self.btn_video = QPushButton("📹 Video\nOFF")
+        self.btn_video.setMinimumSize(120, 80)
+        self.btn_video.setCheckable(True)
+        self.btn_video.clicked.connect(self.toggle_video)
+        self.btn_video.setStyleSheet(self.get_button_style(False))
+        controls_layout.addWidget(self.btn_video)
+        
+        # Audio toggle button
+        self.btn_audio = QPushButton("🎤 Audio\nOFF")
+        self.btn_audio.setMinimumSize(120, 80)
+        self.btn_audio.setCheckable(True)
+        self.btn_audio.clicked.connect(self.toggle_audio)
+        self.btn_audio.setStyleSheet(self.get_button_style(False))
+        controls_layout.addWidget(self.btn_audio)
+        
+        # Chat button
+        self.btn_chat = QPushButton("💬 Chat")
+        self.btn_chat.setMinimumSize(120, 80)
+        self.btn_chat.clicked.connect(self.open_chat)
+        self.btn_chat.setStyleSheet("""
+            QPushButton {
+                background-color: #1a73e8;
+                color: white;
+                border: none;
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1557b0;
+            }
+        """)
+        controls_layout.addWidget(self.btn_chat)
+        
+        # Screen share button
+        self.btn_screen = QPushButton("🖥️ Share\nScreen")
+        self.btn_screen.setMinimumSize(120, 80)
+        self.btn_screen.setCheckable(True)
+        self.btn_screen.clicked.connect(self.toggle_screen_share)
+        self.btn_screen.setStyleSheet(self.get_button_style(False))
+        controls_layout.addWidget(self.btn_screen)
+        
+        # File transfer button
+        self.btn_file = QPushButton("📁 Files")
+        self.btn_file.setMinimumSize(120, 80)
+        self.btn_file.clicked.connect(self.open_file_transfer)
+        self.btn_file.setStyleSheet("""
+            QPushButton {
+                background-color: #1a73e8;
+                color: white;
+                border: none;
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1557b0;
+            }
+        """)
+        controls_layout.addWidget(self.btn_file)
+        
+        main_layout.addWidget(controls_group)
+        
+        # Status area
+        self.status_display = QTextEdit()
+        self.status_display.setReadOnly(True)
+        self.status_display.setMaximumHeight(200)
+        self.status_display.setPlaceholderText("Activity log...")
+        self.status_display.setStyleSheet("""
+            QTextEdit {
+                background-color: #f5f5f5;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                padding: 10px;
+                font-family: 'Consolas', monospace;
+                font-size: 11px;
+            }
+        """)
+        main_layout.addWidget(self.status_display)
+        
+        # Leave button (red)
+        self.btn_leave = QPushButton("🚪 Leave Meeting")
+        self.btn_leave.setMinimumHeight(50)
+        self.btn_leave.clicked.connect(self.leave_meeting)
+        self.btn_leave.setStyleSheet("""
+            QPushButton {
+                background-color: #ea4335;
+                color: white;
+                border: none;
+                border-radius: 10px;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #c5221f;
+            }
+        """)
+        main_layout.addWidget(self.btn_leave)
+        
+        self.log_status("✓ Ready to connect")
     
-    def receive_audio(self):
-        """Receive audio stream"""
-        try:
-            self.audio_receiver = AudioReceiver(AUDIO_PORT)
-            self.audio_thread = threading.Thread(
-                target=self.audio_receiver.start_receiving,
-                daemon=True
-            )
-            self.audio_thread.start()
-            self.update_status("Receiving audio stream...")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to receive audio: {e}")
+    def get_button_style(self, active):
+        """Get button style based on state"""
+        if active:
+            return """
+                QPushButton {
+                    background-color: #34a853;
+                    color: white;
+                    border: none;
+                    border-radius: 10px;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #2d8e47;
+                }
+            """
+        else:
+            return """
+                QPushButton {
+                    background-color: #5f6368;
+                    color: white;
+                    border: none;
+                    border-radius: 10px;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #4a4d50;
+                }
+            """
     
-    # Chat methods
-    def join_chat(self):
-        """Join chat server"""
-        try:
-            self.chat_client = ChatClient(self.server_ip, CHAT_PORT)
-            
-            if self.chat_client.connect(self.username):
-                self.btn_join_chat.setEnabled(False)
-                self.btn_leave_chat.setEnabled(True)
-                self.btn_send.setEnabled(True)
-                self.chat_input.setEnabled(True)
+    # Toggle functions
+    def toggle_video(self):
+        """Toggle video on/off"""
+        if not self.video_active:
+            # Turn ON
+            try:
+                self.log_status("📹 Starting video...")
+                self.video_streamer = VideoStreamer(self.server_ip, VIDEO_PORT)
+                self.video_receiver = VideoReceiver(VIDEO_PORT)
                 
-                # Start message listener
-                threading.Thread(
-                    target=self.chat_message_listener,
-                    daemon=True
-                ).start()
+                threading.Thread(target=self.video_streamer.start_streaming, daemon=True).start()
+                threading.Thread(target=self.video_receiver.start_receiving, daemon=True).start()
                 
-                self.display_chat_message(f"✓ Joined chat as {self.username}")
-                self.update_status("Connected to chat")
-            else:
-                QMessageBox.warning(self, "Error", "Failed to connect to chat server")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Chat error: {e}")
-    
-    def leave_chat(self):
-        """Leave chat server"""
-        if self.chat_client:
-            self.chat_client.disconnect()
-            self.chat_client = None
-        
-        self.btn_join_chat.setEnabled(True)
-        self.btn_leave_chat.setEnabled(False)
-        self.btn_send.setEnabled(False)
-        self.display_chat_message("✗ Left chat")
-        self.update_status("Disconnected from chat")
-    
-    def send_chat_message(self):
-        """Send chat message"""
-        message = self.chat_input.text().strip()
-        if message and self.chat_client:
-            self.chat_client.send_message(message)
-            self.chat_input.clear()
-    
-    def chat_message_listener(self):
-        """Listen for incoming chat messages"""
-        # Note: The actual listening is handled by ChatClient's thread
-        # This is a placeholder for GUI integration
-        pass
-    
-    def display_chat_message(self, message):
-        """Display message in chat area"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.chat_display.append(f"[{timestamp}] {message}")
-    
-    # Screen share methods
-    def share_screen(self):
-        """Start screen sharing"""
-        try:
-            self.screen_streamer = ScreenStreamer(self.server_ip, CHAT_PORT + 2)
-            self.screen_thread = threading.Thread(
-                target=self.screen_streamer.start_streaming,
-                daemon=True
-            )
-            self.screen_thread.start()
+                self.video_active = True
+                self.btn_video.setText("📹 Video\nON")
+                self.btn_video.setStyleSheet(self.get_button_style(True))
+                self.log_status("✓ Video streaming active")
+            except Exception as e:
+                self.log_status(f"✗ Video error: {e}")
+                self.btn_video.setChecked(False)
+        else:
+            # Turn OFF
+            self.log_status("📹 Stopping video...")
+            if self.video_streamer:
+                self.video_streamer.stop_streaming()
+            if self.video_receiver:
+                self.video_receiver.stop_receiving()
             
-            self.screen_status.setText("Screen sharing: Active")
-            self.btn_share_screen.setEnabled(False)
-            self.btn_stop_screen.setEnabled(True)
-            self.update_status("Screen sharing started")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to share screen: {e}")
+            self.video_active = False
+            self.btn_video.setText("📹 Video\nOFF")
+            self.btn_video.setStyleSheet(self.get_button_style(False))
+            self.log_status("✓ Video stopped")
     
-    def stop_screen_share(self):
-        """Stop screen sharing"""
-        if self.screen_streamer:
-            self.screen_streamer.stop_streaming()
-            self.screen_streamer = None
+    def toggle_audio(self):
+        """Toggle audio on/off"""
+        if not self.audio_active:
+            # Turn ON
+            try:
+                self.log_status("🎤 Starting audio...")
+                self.audio_streamer = AudioStreamer(self.server_ip, AUDIO_PORT)
+                self.audio_receiver = AudioReceiver(AUDIO_PORT)
+                
+                threading.Thread(target=self.audio_streamer.start_streaming, daemon=True).start()
+                threading.Thread(target=self.audio_receiver.start_receiving, daemon=True).start()
+                
+                self.audio_active = True
+                self.btn_audio.setText("🎤 Audio\nON")
+                self.btn_audio.setStyleSheet(self.get_button_style(True))
+                self.log_status("✓ Audio streaming active")
+            except Exception as e:
+                self.log_status(f"✗ Audio error: {e}")
+                self.btn_audio.setChecked(False)
+        else:
+            # Turn OFF
+            self.log_status("🎤 Stopping audio...")
+            if self.audio_streamer:
+                self.audio_streamer.stop_streaming()
+            if self.audio_receiver:
+                self.audio_receiver.stop_receiving()
+            
+            self.audio_active = False
+            self.btn_audio.setText("🎤 Audio\nOFF")
+            self.btn_audio.setStyleSheet(self.get_button_style(False))
+            self.log_status("✓ Audio stopped")
+    
+    def toggle_screen_share(self):
+        """Toggle screen sharing"""
+        if not self.screen_active:
+            # Turn ON
+            try:
+                self.log_status("🖥️ Starting screen share...")
+                self.screen_streamer = ScreenStreamer(self.server_ip, SCREEN_SHARE_PORT)
+                
+                threading.Thread(target=self.screen_streamer.start_streaming, daemon=True).start()
+                
+                self.screen_active = True
+                self.btn_screen.setText("🖥️ Sharing\nON")
+                self.btn_screen.setStyleSheet(self.get_button_style(True))
+                self.log_status("✓ Screen sharing active")
+            except Exception as e:
+                self.log_status(f"✗ Screen share error: {e}")
+                self.btn_screen.setChecked(False)
+        else:
+            # Turn OFF
+            self.log_status("🖥️ Stopping screen share...")
+            if self.screen_streamer:
+                self.screen_streamer.stop_streaming()
+            
+            self.screen_active = False
+            self.btn_screen.setText("🖥️ Share\nScreen")
+            self.btn_screen.setStyleSheet(self.get_button_style(False))
+            self.log_status("✓ Screen sharing stopped")
+    
+    # Button actions
+    def open_chat(self):
+        """Open chat window"""
+        if not self.chat_active:
+            try:
+                self.log_status("💬 Joining chat...")
+                self.chat_client = ChatClient(self.server_ip, CHAT_PORT)
+                
+                if self.chat_client.connect(self.username):
+                    self.chat_active = True
+                    self.log_status(f"✓ Joined chat as {self.username}")
+                    self.show_chat_window()
+                else:
+                    self.log_status("✗ Failed to join chat")
+            except Exception as e:
+                self.log_status(f"✗ Chat error: {e}")
+        else:
+            self.show_chat_window()
+    
+    def show_chat_window(self):
+        """Show chat window with message input and attachments"""
+        dialog = ChatDialog(self, self.chat_client)
+        result = dialog.exec_()
         
-        self.screen_status.setText("Screen sharing: Not active")
-        self.btn_share_screen.setEnabled(True)
-        self.btn_stop_screen.setEnabled(False)
-        self.update_status("Screen sharing stopped")
+        if result == QDialog.Accepted:
+            # User sent message, show again
+            self.show_chat_window()
+        else:
+            # User closed chat
+            if self.chat_client:
+                self.chat_client.disconnect()
+                self.chat_active = False
+                self.log_status("✗ Left chat")
     
-    def view_screen(self):
-        """View shared screen"""
-        try:
-            self.screen_receiver = ScreenReceiver(CHAT_PORT + 2)
-            self.screen_thread = threading.Thread(
-                target=self.screen_receiver.start_receiving,
-                daemon=True
-            )
-            self.screen_thread.start()
-            self.update_status("Viewing shared screen...")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to view screen: {e}")
-    
-    # File transfer methods
-    def select_file(self):
-        """Select file for upload"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select File", "", "All Files (*.*)"
+    def open_file_transfer(self):
+        """Open file transfer dialog"""
+        choice = QMessageBox.question(
+            self, "File Transfer",
+            "Upload or Download?",
+            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+            QMessageBox.Cancel
         )
-        if file_path:
-            self.selected_file = file_path
-            self.selected_file_label.setText(Path(file_path).name)
-            self.btn_upload.setEnabled(True)
+        
+        if choice == QMessageBox.Yes:
+            self.upload_file()
+        elif choice == QMessageBox.No:
+            self.download_file()
     
     def upload_file(self):
-        """Upload selected file"""
-        if not hasattr(self, 'selected_file'):
-            QMessageBox.warning(self, "Error", "No file selected")
-            return
-        
-        self.upload_progress.setVisible(True)
-        self.upload_progress.setValue(0)
-        self.btn_upload.setEnabled(False)
-        
-        def upload_thread():
-            try:
-                self.file_client = FileTransferClient(self.server_ip, FILE_TRANSFER_PORT)
-                success = self.file_client.upload_file(self.selected_file)
-                
-                if success:
-                    self.transfer_log.append(
-                        f"✓ Uploaded: {Path(self.selected_file).name}"
-                    )
-                    self.upload_progress.setValue(100)
-                else:
-                    self.transfer_log.append(
-                        f"✗ Upload failed: {Path(self.selected_file).name}"
-                    )
-            except Exception as e:
-                self.transfer_log.append(f"✗ Error: {e}")
-            finally:
-                self.btn_upload.setEnabled(True)
-                if self.file_client:
-                    self.file_client.disconnect()
-        
-        threading.Thread(target=upload_thread, daemon=True).start()
+        """Upload file to server"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select File to Upload", "", "All Files (*.*)"
+        )
+        if file_path:
+            self.log_status(f"📤 Uploading {Path(file_path).name}...")
+            
+            def upload_thread():
+                try:
+                    self.file_client = FileTransferClient(self.server_ip, FILE_TRANSFER_PORT)
+                    success = self.file_client.upload_file(file_path)
+                    
+                    if success:
+                        self.log_status(f"✓ Uploaded: {Path(file_path).name}")
+                    else:
+                        self.log_status(f"✗ Upload failed")
+                except Exception as e:
+                    self.log_status(f"✗ Upload error: {e}")
+                finally:
+                    if self.file_client:
+                        self.file_client.disconnect()
+            
+            threading.Thread(target=upload_thread, daemon=True).start()
     
     def download_file(self):
         """Download file from server"""
-        filename = self.download_filename.text().strip()
-        if not filename:
-            QMessageBox.warning(self, "Error", "Enter a filename")
-            return
-        
-        save_dir = QFileDialog.getExistingDirectory(self, "Save to Directory")
-        if not save_dir:
-            return
-        
-        self.download_progress.setVisible(True)
-        self.download_progress.setValue(0)
-        self.btn_download.setEnabled(False)
-        
-        def download_thread():
-            try:
-                self.file_client = FileTransferClient(self.server_ip, FILE_TRANSFER_PORT)
-                success = self.file_client.download_file(filename, save_dir)
+        filename, ok = QInputDialog.getText(
+            self, "Download File", "Enter filename to download:"
+        )
+        if ok and filename:
+            save_dir = QFileDialog.getExistingDirectory(self, "Save to Directory")
+            if save_dir:
+                self.log_status(f"📥 Downloading {filename}...")
                 
-                if success:
-                    self.transfer_log.append(f"✓ Downloaded: {filename}")
-                    self.download_progress.setValue(100)
-                else:
-                    self.transfer_log.append(f"✗ Download failed: {filename}")
-            except Exception as e:
-                self.transfer_log.append(f"✗ Error: {e}")
-            finally:
-                self.btn_download.setEnabled(True)
-                if self.file_client:
-                    self.file_client.disconnect()
+                def download_thread():
+                    try:
+                        self.file_client = FileTransferClient(self.server_ip, FILE_TRANSFER_PORT)
+                        success = self.file_client.download_file(filename, save_dir)
+                        
+                        if success:
+                            self.log_status(f"✓ Downloaded: {filename}")
+                        else:
+                            self.log_status(f"✗ Download failed")
+                    except Exception as e:
+                        self.log_status(f"✗ Download error: {e}")
+                    finally:
+                        if self.file_client:
+                            self.file_client.disconnect()
+                
+                threading.Thread(target=download_thread, daemon=True).start()
+    
+    def leave_meeting(self):
+        """Leave meeting and close app"""
+        reply = QMessageBox.question(
+            self, "Leave Meeting",
+            "Are you sure you want to leave?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
         
-        threading.Thread(target=download_thread, daemon=True).start()
+        if reply == QMessageBox.Yes:
+            self.cleanup()
+            self.close()
     
-    def update_status(self, message):
-        """Update status label"""
-        self.status_label.setText(f"Status: {message}")
+    def log_status(self, message):
+        """Log message to status display"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.status_display.append(f"[{timestamp}] {message}")
     
-    def closeEvent(self, event):
-        """Handle window close event"""
-        # Clean up all connections
-        if self.chat_client:
-            self.chat_client.disconnect()
+    def cleanup(self):
+        """Clean up all connections"""
+        self.log_status("🛑 Cleaning up...")
+        
         if self.video_streamer:
             self.video_streamer.stop_streaming()
+        if self.video_receiver:
+            self.video_receiver.stop_receiving()
         if self.audio_streamer:
             self.audio_streamer.stop_streaming()
+        if self.audio_receiver:
+            self.audio_receiver.stop_receiving()
         if self.screen_streamer:
             self.screen_streamer.stop_streaming()
-        
+        if self.chat_client:
+            self.chat_client.disconnect()
+    
+    def closeEvent(self, event):
+        """Handle window close"""
+        self.cleanup()
         event.accept()
 
 
 def main():
-    """Main function to run the GUI"""
+    """Main function"""
     app = QApplication(sys.argv)
-    
-    # Set application style
     app.setStyle('Fusion')
     
-    # Create and show main window
-    window = LANCollaborationGUI()
+    window = CollaborationGUI()
     window.show()
     
     sys.exit(app.exec_())
