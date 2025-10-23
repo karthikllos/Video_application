@@ -4,7 +4,7 @@ Uses struct for efficient binary packing/unpacking
 """
 
 import struct
-from constants import HEADER_SIZE, PROTOCOL_VERSION, MAX_MESSAGE_SIZE
+from shared.constants import HEADER_SIZE, PROTOCOL_VERSION, MAX_MESSAGE_SIZE
 
 def pack_message(msg_type, payload=b""):
     """
