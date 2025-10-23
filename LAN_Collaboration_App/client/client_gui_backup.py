@@ -9,10 +9,6 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-# Suppress Qt threading warnings (harmless warnings about cross-thread operations)
-import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QTextEdit, QLineEdit, QInputDialog,
@@ -181,11 +177,8 @@ class ModernCollaborationGUI(QMainWindow):
         self.chat_visible = True
         self.screen_active = False
         
-        # Video frame buffers
+        # Video frame buffer
         self.current_frame = None
-        self.received_frames = {}  # {sender_addr: frame}
-        self.video_receive_socket = None
-        self.video_send_socket = None
         
         # Prompt for connection details
         self.setup_connection()
@@ -704,15 +697,11 @@ class ModernCollaborationGUI(QMainWindow):
         """Toggle video"""
         if not self.video_active:
             try:
+                # Start video capture in separate thread
                 self.video_active = True
-                
-                # Start video capture and sending
                 threading.Thread(target=self.capture_video, daemon=True).start()
                 
-                # Start video receiving
-                threading.Thread(target=self.receive_video, daemon=True).start()
-                
-                self.add_system_message("Camera ON - Broadcasting & Receiving")
+                self.add_system_message("Camera turned on")
             except Exception as e:
                 self.add_system_message(f"Camera error: {e}")
                 self.btn_camera.setChecked(False)
@@ -720,21 +709,6 @@ class ModernCollaborationGUI(QMainWindow):
         else:
             self.video_active = False
             self.current_frame = None
-            if hasattr(self, 'received_frames'):
-                self.received_frames.clear()
-            
-            # Close sockets
-            if hasattr(self, 'video_send_socket') and self.video_send_socket:
-                try:
-                    self.video_send_socket.close()
-                except:
-                    pass
-            if hasattr(self, 'video_receive_socket') and self.video_receive_socket:
-                try:
-                    self.video_receive_socket.close()
-                except:
-                    pass
-                    
             self.add_system_message("Camera turned off")
     
     def capture_video(self):
@@ -773,61 +747,6 @@ class ModernCollaborationGUI(QMainWindow):
             sock.close()
     
     
-
-    
-    def receive_video(self):
-        """Receive video broadcasts from server"""
-        import socket
-        from shared.helpers import unpack_message
-        
-        try:
-            # Create UDP socket for receiving
-            self.video_receive_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            
-            # Enable address reuse
-            self.video_receive_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            
-            # Set timeout
-            self.video_receive_socket.settimeout(0.5)
-            
-            # Bind to VIDEO_PORT
-            try:
-                self.video_receive_socket.bind(('', VIDEO_PORT))
-                self.add_system_message(f"✓ Receiving video on port {VIDEO_PORT}")
-            except OSError as e:
-                self.add_system_message(f"⚠ Could not bind to port {VIDEO_PORT}: {e}")
-                return
-            
-            while self.video_active:
-                try:
-                    data, addr = self.video_receive_socket.recvfrom(65536)
-                    
-                    # Unpack message
-                    version, msg_type, payload_length, seq_num, payload = unpack_message(data)
-                    
-                    if msg_type == 0x01:  # VIDEO message
-                        # Decode JPEG frame
-                        nparr = np.frombuffer(payload, np.uint8)
-                        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                        
-                        if frame is not None:
-                            # Store received frame
-                            self.received_frames[addr] = frame
-                            
-                except socket.timeout:
-                    pass
-                except Exception as e:
-                    pass
-                        
-        except Exception as e:
-            self.add_system_message(f"Video receive error: {e}")
-        finally:
-            if self.video_receive_socket:
-                try:
-                    self.video_receive_socket.close()
-                except:
-                    pass
-    
     def update_video_frame(self):
         """Update video display in GUI"""
         try:
@@ -836,7 +755,7 @@ class ModernCollaborationGUI(QMainWindow):
                 frame_resized = cv2.resize(self.current_frame, (320, 240))
                 
                 # Convert frame to QPixmap
-                frame = cv2.cvtColor(frame_resized, cv2.COLOR_BGR_RGB)
+                frame = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
                 h, w, ch = frame.shape
                 bytes_per_line = ch * w
                 qt_image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
@@ -844,7 +763,7 @@ class ModernCollaborationGUI(QMainWindow):
                 
                 # Set pixmap directly (already correct size)
                 self.tile_self.video_label.setPixmap(pixmap)
-        except (RuntimeError, AttributeError, Exception):
+        except (RuntimeError, AttributeError, Exception) as e:
             # Widget has been deleted or other error, stop timer
             pass
     

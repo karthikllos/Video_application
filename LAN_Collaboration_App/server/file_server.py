@@ -175,7 +175,11 @@ class FileTransferServer:
                     return
             
             # Send acknowledgment
-            client_socket.send(b"OK")
+            try:
+                client_socket.sendall(b"OK")
+                time.sleep(0.1)  # Give time for acknowledgment to send
+            except Exception as e:
+                print(f"⚠️  Failed to send acknowledgment: {e}")
             
             with self.stats_lock:
                 self.stats['files_uploaded'] += 1
