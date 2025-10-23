@@ -17,8 +17,9 @@ from shared.constants import (
     SERVER_IP, CHAT_PORT, BUFFER_SIZE,
     CONNECTION_TIMEOUT, MAX_RETRIES, RETRY_DELAY
 )
-from shared.protocol import CHAT, DISCONNECT
+from shared.protocol import CHAT, DISCONNECT, USER_LIST
 from shared.helpers import pack_message, unpack_message
+import json
 
 
 class ChatClient:
@@ -31,6 +32,9 @@ class ChatClient:
         self.username = ""
         self.running = False
         self.listener_thread = None
+        self.user_list = []
+        self.user_list_callback = None  # Callback for user list updates
+        self.message_callback = None  # Callback for incoming messages
         
     def connect(self, username):
         """Connect to the chat server"""
@@ -159,6 +163,11 @@ class ChatClient:
                         if msg_type == CHAT:
                             message_text = payload.decode('utf-8')
                             self._display_message(message_text)
+                        elif msg_type == USER_LIST:
+                            user_list_json = payload.decode('utf-8')
+                            self.user_list = json.loads(user_list_json)
+                            if self.user_list_callback:
+                                self.user_list_callback(self.user_list)
                         
                         # Remove processed message from buffer
                         buffer = buffer[message_size:]
@@ -183,6 +192,22 @@ class ChatClient:
         """Display a received message with timestamp"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         print(f"[{timestamp}] {message}")
+        
+        # Call callback if set
+        if self.message_callback:
+            self.message_callback(message, timestamp)
+    
+    def set_user_list_callback(self, callback):
+        """Set callback function for user list updates"""
+        self.user_list_callback = callback
+    
+    def set_message_callback(self, callback):
+        """Set callback function for incoming messages"""
+        self.message_callback = callback
+    
+    def get_user_list(self):
+        """Get current user list"""
+        return self.user_list.copy()
     
     def start_interactive_mode(self):
         """Start interactive chat mode"""

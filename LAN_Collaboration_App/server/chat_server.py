@@ -14,8 +14,9 @@ from datetime import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from shared.constants import CHAT_PORT, BUFFER_SIZE, MAX_CONNECTIONS
-from shared.protocol import CHAT, DISCONNECT
+from shared.protocol import CHAT, DISCONNECT, USER_LIST
 from shared.helpers import pack_message, unpack_message
+import json
 
 
 class ChatServer:
@@ -117,17 +118,20 @@ class ChatServer:
                         if msg_type == CHAT:
                             message_text = payload.decode('utf-8')
                             
-                            # Extract username from first message
+                            # Log message
+                            timestamp = datetime.now().strftime("%H:%M:%S")
+                            print(f"[{timestamp}] {message_text}")
+                            
+                            # Extract username from first message (join message)
                             if username == "Unknown" and ":" in message_text:
                                 username = message_text.split(":", 1)[0].strip()
                                 with self.clients_lock:
                                     self.clients[client_socket]['username'] = username
+                                # Broadcast updated user list first
+                                self._broadcast_user_list()
                             
-                            # Log and broadcast
-                            timestamp = datetime.now().strftime("%H:%M:%S")
-                            print(f"[{timestamp}] {message_text}")
-                            
-                            self._broadcast_message(message_text, sender=client_socket)
+                            # Broadcast message to ALL clients (including sender for acknowledgment)
+                            self._broadcast_message(message_text, sender=None)
                             self.stats['messages_sent'] += 1
                         
                         elif msg_type == DISCONNECT:
@@ -153,10 +157,11 @@ class ChatServer:
                     del self.clients[client_socket]
                     self.stats['current_connections'] -= 1
             
-            # Announce departure
+            # Announce departure and update user list
             if username != "Unknown":
                 leave_msg = f"{username} has left the chat"
                 self._broadcast_message(leave_msg)
+                self._broadcast_user_list()
             
             client_socket.close()
             print(f"✗ {username} ({address[0]}:{address[1]}) disconnected "
@@ -174,6 +179,28 @@ class ChatServer:
                 if client_socket == sender:
                     continue  # Don't echo back to sender
                 
+                try:
+                    client_socket.sendall(packet)
+                except Exception as e:
+                    disconnected.append(client_socket)
+            
+            # Remove disconnected clients
+            for socket in disconnected:
+                if socket in self.clients:
+                    del self.clients[socket]
+    
+    def _broadcast_user_list(self):
+        """Broadcast updated user list to all clients"""
+        with self.clients_lock:
+            usernames = [info['username'] for info in self.clients.values() if info['username'] != "Unknown"]
+        
+        user_list_data = json.dumps(usernames).encode('utf-8')
+        packet = pack_message(USER_LIST, user_list_data)
+        
+        with self.clients_lock:
+            disconnected = []
+            
+            for client_socket in list(self.clients.keys()):
                 try:
                     client_socket.sendall(packet)
                 except Exception as e:
