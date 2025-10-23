@@ -1,5 +1,0 @@
-PyQt5
-PyAudio
-opencv-python
-pytest
-requests
