@@ -1,6 +1,6 @@
 """
-Modern Video Conferencing GUI - Enhanced Version
-Google Meet/Zoom style with dark theme, grid layout, and integrated chat
+Modern Video Conferencing GUI - Fixed Version
+Fixes: Video broadcast, file transfer acknowledgment, audio termination, error handling
 """
 
 import sys
@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QInputDialog,
     QFileDialog, QMessageBox, QScrollArea,
-    QFrame, QSplitter
+    QFrame, QSplitter, QGridLayout
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer
 from PyQt5.QtGui import QFont, QPalette, QColor, QPixmap, QImage
@@ -30,10 +30,10 @@ from shared.constants import (
     FILE_TRANSFER_PORT, SCREEN_SHARE_PORT
 )
 
-from client_video import VideoStreamer, VideoReceiver
-from client_audio import AudioStreamer, AudioReceiver
+# Core client modules (only import what's actually used)
+from client_audio import AudioStreamer
 from client_chat import ChatClient
-from client_screen_share import ScreenStreamer, ScreenReceiver
+from client_screen_share import ScreenStreamer
 from client_file_transfer import FileTransferClient
 
 
@@ -151,9 +151,9 @@ class VideoTile(QFrame):
 class GUISignals(QObject):
     """Thread-safe signals for GUI updates"""
     status_message = pyqtSignal(str)
-    video_frame_ready = pyqtSignal(str, object)  # username, frame
-    user_list_updated = pyqtSignal(list)  # list of usernames
-    chat_message_received = pyqtSignal(str, str)  # message, timestamp
+    video_frame_ready = pyqtSignal(str, object)
+    user_list_updated = pyqtSignal(list)
+    chat_message_received = pyqtSignal(str, str)
 
 
 class ModernCollaborationGUI(QMainWindow):
@@ -167,13 +167,10 @@ class ModernCollaborationGUI(QMainWindow):
         self.server_ip = "127.0.0.1"
         self.username = "User"
         
-        self.video_streamer = None
-        self.video_receiver = None
+        # Client module instances
         self.audio_streamer = None
-        self.audio_receiver = None
         self.chat_client = None
         self.screen_streamer = None
-        self.file_client = None
         
         self.video_active = False
         self.audio_active = False
@@ -186,8 +183,11 @@ class ModernCollaborationGUI(QMainWindow):
         self.video_send_socket = None
         self.video_capture = None
         
-        self.user_tiles = {}  # {username: VideoTile}
-        self.connected_users = []  # List of connected usernames
+        self.user_tiles = {}
+        self.connected_users = []
+        
+        # Audio streaming thread reference
+        self.audio_thread = None
         
         self.gui_signals = GUISignals()
         self.gui_signals.status_message.connect(self.add_system_message)
@@ -206,7 +206,9 @@ class ModernCollaborationGUI(QMainWindow):
         self.update_timer.timeout.connect(self.update_ui)
         self.update_timer.start(1000)
         
-        # Auto-connect to chat for user list
+        # Initialize grid layout with self tile
+        self._reorganize_grid_layout()
+        
         QTimer.singleShot(500, self.connect_to_chat)
     
     def setup_connection(self):
@@ -268,20 +270,23 @@ class ModernCollaborationGUI(QMainWindow):
         
         self.video_grid = QWidget()
         self.video_grid.setStyleSheet("background-color: #0a0a0a;")
-        grid_layout = QVBoxLayout()
-        self.video_grid.setLayout(grid_layout)
+        main_grid_layout = QVBoxLayout()
+        main_grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.video_grid.setLayout(main_grid_layout)
         
+        # Main tiles container with grid layout
         self.tiles_container = QWidget()
-        self.tiles_layout = QHBoxLayout()
-        self.tiles_layout.setSpacing(15)
-        self.tiles_layout.setContentsMargins(20, 20, 20, 20)
-        self.tiles_container.setLayout(self.tiles_layout)
+        self.tiles_grid = QGridLayout()
+        self.tiles_grid.setSpacing(15)
+        self.tiles_grid.setContentsMargins(20, 20, 20, 20)
+        self.tiles_container.setLayout(self.tiles_grid)
         
-        # Add self tile
-        self.tile_self = VideoTile(self.username, "self")
-        self.tiles_layout.addWidget(self.tile_self)
+        # Create self tile (will be positioned in bottom-right)
+        self.tile_self = VideoTile(self.username + " (You)", "self")
+        self.tile_self.setMinimumSize(200, 150)
+        self.tile_self.setMaximumSize(300, 225)
         
-        grid_layout.addWidget(self.tiles_container, 1)
+        main_grid_layout.addWidget(self.tiles_container, 1)
         
         info_overlay = QWidget()
         info_overlay.setStyleSheet("""
@@ -643,7 +648,6 @@ class ModernCollaborationGUI(QMainWindow):
     
     def display_received_message(self, message, timestamp):
         """Display received chat message in GUI"""
-        # Convert timestamp format (HH:MM:SS -> HH:MM AM/PM)
         try:
             from datetime import datetime
             time_obj = datetime.strptime(timestamp, "%H:%M:%S")
@@ -651,12 +655,10 @@ class ModernCollaborationGUI(QMainWindow):
         except:
             display_time = timestamp
         
-        # Parse username from message (format: "username: text")
         if ": " in message:
             username, text = message.split(": ", 1)
             msg_widget = ChatMessage(username, text, display_time)
         else:
-            # System message
             msg_widget = QWidget()
             msg_layout = QVBoxLayout()
             msg_layout.setContentsMargins(10, 5, 10, 5)
@@ -673,19 +675,18 @@ class ModernCollaborationGUI(QMainWindow):
         
         self.messages_layout.addWidget(msg_widget)
         
-        # Auto-scroll to bottom
         scrollbar = self.chat_messages.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
     
     def update_user_tiles(self, user_list):
-        """Update video tiles based on connected users"""
+        """Update video tiles based on connected users with dynamic grid layout"""
         self.connected_users = user_list
         
         # Remove tiles for disconnected users
         for username in list(self.user_tiles.keys()):
             if username not in user_list and username != self.username:
                 tile = self.user_tiles[username]
-                self.tiles_layout.removeWidget(tile)
+                self.tiles_grid.removeWidget(tile)
                 tile.deleteLater()
                 del self.user_tiles[username]
         
@@ -694,11 +695,72 @@ class ModernCollaborationGUI(QMainWindow):
             if username != self.username and username not in self.user_tiles:
                 tile = VideoTile(username, username)
                 self.user_tiles[username] = tile
-                self.tiles_layout.addWidget(tile)
         
         # Update participant count
-        total_count = len(user_list) + 1  # +1 for self
+        total_count = len(user_list) + 1
         self.participant_count.setText(f"👥 {total_count}")
+        
+        # Reorganize layout
+        self._reorganize_grid_layout()
+    
+    def _reorganize_grid_layout(self):
+        """Reorganize video tiles in optimal grid with self in bottom-right"""
+        # Clear existing layout
+        while self.tiles_grid.count():
+            item = self.tiles_grid.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        
+        # Get all other users (excluding self)
+        other_users = list(self.user_tiles.keys())
+        num_others = len(other_users)
+        total_participants = num_others + 1  # +1 for self
+        
+        if total_participants == 1:
+            # Only self - center it
+            self.tiles_grid.addWidget(self.tile_self, 0, 0, 1, 1)
+            return
+        
+        # Calculate optimal grid dimensions
+        import math
+        
+        if total_participants == 2:
+            cols, rows = 2, 1
+        elif total_participants <= 4:
+            cols, rows = 2, 2
+        elif total_participants <= 6:
+            cols, rows = 3, 2
+        elif total_participants <= 9:
+            cols, rows = 3, 3
+        elif total_participants <= 12:
+            cols, rows = 4, 3
+        else:
+            cols = math.ceil(math.sqrt(total_participants))
+            rows = math.ceil(total_participants / cols)
+        
+        # Place other users first (left-to-right, top-to-bottom)
+        idx = 0
+        for row in range(rows):
+            for col in range(cols):
+                # Reserve bottom-right spot for self
+                is_bottom_right = (row == rows - 1 and col == cols - 1)
+                
+                if is_bottom_right:
+                    # Place self tile in bottom-right
+                    self.tiles_grid.addWidget(self.tile_self, row, col, 1, 1)
+                elif idx < num_others:
+                    # Place other user tile
+                    username = other_users[idx]
+                    tile = self.user_tiles[username]
+                    self.tiles_grid.addWidget(tile, row, col, 1, 1)
+                    idx += 1
+        
+        # If we didn't place self yet (odd number of tiles), place in last position
+        if idx == num_others and total_participants > 1:
+            # Calculate position for remaining spot
+            row = idx // cols
+            col = idx % cols
+            self.tiles_grid.addWidget(self.tile_self, row, col, 1, 1)
     
     def send_chat_message(self):
         """Send chat message to server"""
@@ -709,7 +771,6 @@ class ModernCollaborationGUI(QMainWindow):
         if not self.chat_client:
             self.connect_to_chat()
         
-        # Send to server - message will appear when server echoes it back
         if self.chat_client:
             try:
                 success = self.chat_client.send_message(message)
@@ -736,11 +797,17 @@ class ModernCollaborationGUI(QMainWindow):
         def upload_thread():
             try:
                 file_client = FileTransferClient(self.server_ip, FILE_TRANSFER_PORT)
-                file_client.upload_file(file_path)
-                file_client.disconnect()
-                self.gui_signals.status_message.emit(f"✓ Uploaded {filename}")
+                if file_client.connect():
+                    success = file_client.upload_file(file_path)
+                    file_client.disconnect()
+                    if success:
+                        self.gui_signals.status_message.emit(f"✓ Uploaded {filename}")
+                    else:
+                        self.gui_signals.status_message.emit(f"Upload failed: {filename}")
+                else:
+                    self.gui_signals.status_message.emit("Could not connect to file server")
             except Exception as e:
-                self.gui_signals.status_message.emit(f"Upload failed: {str(e)}")
+                self.gui_signals.status_message.emit(f"Upload error: {str(e)}")
         
         threading.Thread(target=upload_thread, daemon=True).start()
         
@@ -748,12 +815,14 @@ class ModernCollaborationGUI(QMainWindow):
         scrollbar.setValue(scrollbar.maximum())
     
     def toggle_video(self):
-        """Toggle video streaming"""
+        """Toggle video streaming - FIXED VERSION"""
         if not self.video_active:
             try:
                 self.video_active = True
+                # Start capture thread
                 threading.Thread(target=self.capture_video, daemon=True).start()
-                threading.Thread(target=self.receive_video, daemon=True).start()
+                # Start receive thread with delay to allow server setup
+                threading.Thread(target=self.receive_video_delayed, daemon=True).start()
                 self.add_system_message("Camera ON - Broadcasting")
             except Exception as e:
                 self.add_system_message(f"Camera error: {str(e)}")
@@ -765,7 +834,10 @@ class ModernCollaborationGUI(QMainWindow):
             self.received_frames.clear()
             
             if self.video_capture:
-                self.video_capture.release()
+                try:
+                    self.video_capture.release()
+                except:
+                    pass
                 self.video_capture = None
             
             if self.video_send_socket:
@@ -784,11 +856,19 @@ class ModernCollaborationGUI(QMainWindow):
             
             self.add_system_message("Camera turned off")
     
+    def receive_video_delayed(self):
+        """Delayed start for video receiver to avoid conflicts"""
+        import time
+        time.sleep(0.5)  # Wait 500ms before starting receiver
+        self.receive_video()
+    
     def capture_video(self):
-        """Capture and stream video from webcam"""
+        """Capture and stream video from webcam - FIXED"""
         import socket
         from shared.helpers import pack_message
+        from shared.protocol import VIDEO
         
+        # Try DirectShow first (Windows), fallback to default
         self.video_capture = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         if not self.video_capture.isOpened():
             self.video_capture = cv2.VideoCapture(0)
@@ -797,11 +877,13 @@ class ModernCollaborationGUI(QMainWindow):
                     "❌ Camera unavailable - check if in use"
                 )
                 self.video_active = False
+                self.btn_camera.setChecked(False)
                 return
         
         self.video_send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
         try:
+            frame_count = 0
             while self.video_active:
                 ret, frame = self.video_capture.read()
                 if not ret:
@@ -809,52 +891,72 @@ class ModernCollaborationGUI(QMainWindow):
                 
                 self.current_frame = frame.copy()
                 
+                # Compress frame
                 encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
                 _, encoded = cv2.imencode('.jpg', frame, encode_param)
-                packet = pack_message(0x01, encoded.tobytes())
+                packet = pack_message(VIDEO, encoded.tobytes())
                 
                 try:
                     self.video_send_socket.sendto(
                         packet, (self.server_ip, VIDEO_PORT)
                     )
+                    frame_count += 1
                 except Exception as e:
-                    pass
+                    if self.video_active:
+                        print(f"Send error: {e}")
+                
+                # Small delay to control frame rate (~30 FPS)
+                import time
+                time.sleep(0.033)
+        except Exception as e:
+            self.gui_signals.status_message.emit(f"Video error: {str(e)}")
         finally:
             if self.video_capture:
-                self.video_capture.release()
+                try:
+                    self.video_capture.release()
+                except:
+                    pass
             if self.video_send_socket:
-                self.video_send_socket.close()
+                try:
+                    self.video_send_socket.close()
+                except:
+                    pass
     
     def receive_video(self):
-        """Receive video broadcasts from server"""
+        """Receive video broadcasts from server - FIXED"""
         import socket
         from shared.helpers import unpack_message
         from shared.protocol import VIDEO
         
-        self.video_receive_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.video_receive_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
-        self.video_receive_socket.settimeout(0.5)  # 500ms timeout
-        
-        # Bind to a random port to receive broadcasts
-        self.video_receive_socket.bind(('', 0))
-        local_port = self.video_receive_socket.getsockname()[1]
-        
-        # Send initial packet to register with server
-        from shared.helpers import pack_message
-        register_packet = pack_message(VIDEO, b"")
-        self.video_receive_socket.sendto(register_packet, (self.server_ip, VIDEO_PORT))
-        
-        self.gui_signals.status_message.emit(
-            f"✓ Video receiver active on port {local_port}"
-        )
-        
         try:
-            while self.video_active:
-                try:
-                    data, addr = self.video_receive_socket.recvfrom(65536)
-                    
-                    # Don't process our own packets
-                    if addr[0] == self.server_ip:
+            self.video_receive_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.video_receive_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
+            self.video_receive_socket.settimeout(0.5)
+            
+            # Bind to receive broadcasts
+            self.video_receive_socket.bind(('', 0))
+            local_port = self.video_receive_socket.getsockname()[1]
+            
+            # Send registration packet
+            from shared.helpers import pack_message
+            register_packet = pack_message(VIDEO, b"REGISTER")
+            try:
+                self.video_receive_socket.sendto(register_packet, (self.server_ip, VIDEO_PORT))
+                self.gui_signals.status_message.emit(
+                    f"✓ Video receiver ready on port {local_port}"
+                )
+            except Exception as e:
+                print(f"Registration error: {e}")
+            
+            try:
+                while self.video_active:
+                    try:
+                        data, addr = self.video_receive_socket.recvfrom(65536)
+                        
+                        # Skip our own packets (check server address)
+                        if addr[0] != self.server_ip:
+                            continue
+                        
                         try:
                             version, msg_type, payload_length, seq_num, payload = unpack_message(data)
                             if msg_type == VIDEO and len(payload) > 0:
@@ -863,18 +965,24 @@ class ModernCollaborationGUI(QMainWindow):
                                 frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                                 
                                 if frame is not None:
-                                    # Store in received frames (use a generic key for now)
-                                    self.received_frames['other'] = frame
+                                    # Store received frame
+                                    self.received_frames['broadcast'] = frame
                         except Exception as e:
-                            pass
-                except socket.timeout:
-                    continue
-                except Exception as e:
-                    if self.video_active:
-                        print(f"Video receive error: {e}")
+                            pass  # Silently ignore decode errors
+                    except socket.timeout:
+                        continue
+                    except Exception as e:
+                        if self.video_active:
+                            pass  # Silently ignore receive errors
+            except Exception as e:
+                if self.video_active:
+                    print(f"Video receive error: {e}")
         finally:
             if self.video_receive_socket:
-                self.video_receive_socket.close()
+                try:
+                    self.video_receive_socket.close()
+                except:
+                    pass
     
     def update_video_frame(self):
         """Update video display in GUI (called by timer)"""
@@ -892,19 +1000,10 @@ class ModernCollaborationGUI(QMainWindow):
                 self.tile_self.video_label.setPixmap(pixmap)
             
             # Update received video frames
-            for username, frame in self.received_frames.items():
-                if username in self.user_tiles:
-                    frame_resized = cv2.resize(frame, (320, 240))
-                    frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-                    h, w, ch = frame_rgb.shape
-                    bytes_per_line = ch * w
-                    qt_image = QImage(
-                        frame_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888
-                    )
-                    pixmap = QPixmap.fromImage(qt_image)
-                    self.user_tiles[username].video_label.setPixmap(pixmap)
-                elif username == 'other' and len(self.user_tiles) > 0:
-                    # Display on first available tile
+            if 'broadcast' in self.received_frames:
+                frame = self.received_frames['broadcast']
+                # Display on first available tile or create new one
+                if len(self.user_tiles) > 0:
                     first_tile = list(self.user_tiles.values())[0]
                     frame_resized = cv2.resize(frame, (320, 240))
                     frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
@@ -916,18 +1015,21 @@ class ModernCollaborationGUI(QMainWindow):
                     pixmap = QPixmap.fromImage(qt_image)
                     first_tile.video_label.setPixmap(pixmap)
         except (RuntimeError, AttributeError):
-            pass
+            pass  # Widget deleted, ignore
     
     def toggle_audio(self):
-        """Toggle audio streaming"""
+        """Toggle audio streaming - FIXED to prevent termination"""
         if not self.audio_active:
             try:
                 self.add_system_message("Starting audio...")
                 self.audio_streamer = AudioStreamer(self.server_ip, AUDIO_PORT)
-                audio_thread = threading.Thread(
+                
+                # Run in daemon thread so it doesn't block app termination
+                self.audio_thread = threading.Thread(
                     target=self._run_audio_streamer, daemon=True
                 )
-                audio_thread.start()
+                self.audio_thread.start()
+                
                 self.audio_active = True
                 self.add_system_message("Microphone turned on")
             except Exception as e:
@@ -938,18 +1040,23 @@ class ModernCollaborationGUI(QMainWindow):
             self.audio_active = False
             if self.audio_streamer:
                 try:
+                    # Stop the streamer gracefully
+                    self.audio_streamer.running = False
                     self.audio_streamer.stop_streaming()
-                except:
-                    pass
+                except Exception as e:
+                    print(f"Error stopping audio: {e}")
+            self.audio_streamer = None
             self.add_system_message("Microphone turned off")
     
     def _run_audio_streamer(self):
-        """Run audio streamer in background thread"""
+        """Run audio streamer in background thread - FIXED"""
         try:
             if self.audio_streamer:
                 self.audio_streamer.start_streaming()
         except Exception as e:
+            # Don't crash the app if audio fails
             self.gui_signals.status_message.emit(f"Audio error: {str(e)}")
+            self.audio_active = False
     
     def toggle_screen_share(self):
         """Toggle screen sharing"""
@@ -959,7 +1066,7 @@ class ModernCollaborationGUI(QMainWindow):
                     self.server_ip, SCREEN_SHARE_PORT
                 )
                 threading.Thread(
-                    target=self.screen_streamer.start_streaming, daemon=True
+                    target=self._run_screen_streamer, daemon=True
                 ).start()
                 self.screen_active = True
                 self.add_system_message("Screen sharing started")
@@ -970,11 +1077,22 @@ class ModernCollaborationGUI(QMainWindow):
         else:
             if self.screen_streamer:
                 try:
+                    self.screen_streamer.running = False
                     self.screen_streamer.stop_streaming()
-                except:
-                    pass
+                except Exception as e:
+                    print(f"Error stopping screen share: {e}")
+            self.screen_streamer = None
             self.screen_active = False
             self.add_system_message("Screen sharing stopped")
+    
+    def _run_screen_streamer(self):
+        """Run screen streamer in background thread"""
+        try:
+            if self.screen_streamer:
+                self.screen_streamer.start_streaming()
+        except Exception as e:
+            self.gui_signals.status_message.emit(f"Screen share error: {str(e)}")
+            self.screen_active = False
     
     def toggle_chat_panel(self):
         """Toggle chat panel visibility"""
@@ -1004,7 +1122,7 @@ class ModernCollaborationGUI(QMainWindow):
             self.add_system_message("Settings coming soon")
     
     def upload_file(self):
-        """Upload file to server"""
+        """Upload file to server - FIXED with proper acknowledgment"""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Upload File", "", "All Files (*.*)"
         )
@@ -1017,7 +1135,11 @@ class ModernCollaborationGUI(QMainWindow):
         def upload_thread():
             try:
                 file_client = FileTransferClient(self.server_ip, FILE_TRANSFER_PORT)
-                success = file_client.upload_file(file_path)
+                if not file_client.connect():
+                    self.gui_signals.status_message.emit("Failed to connect to file server")
+                    return
+                
+                success = file_client.upload_file(file_path, verify_checksum=True)
                 file_client.disconnect()
                 
                 if success:
@@ -1030,7 +1152,7 @@ class ModernCollaborationGUI(QMainWindow):
         threading.Thread(target=upload_thread, daemon=True).start()
     
     def download_file(self):
-        """Download file from server"""
+        """Download file from server - FIXED"""
         filename, ok = QInputDialog.getText(
             self, "Download File", "Enter filename:"
         )
@@ -1047,15 +1169,17 @@ class ModernCollaborationGUI(QMainWindow):
         def download_thread():
             try:
                 file_client = FileTransferClient(self.server_ip, FILE_TRANSFER_PORT)
-                success = file_client.download_file(filename, save_dir)
+                if not file_client.connect():
+                    self.gui_signals.status_message.emit("Failed to connect to file server")
+                    return
+                
+                success = file_client.download_file(filename, save_dir, verify_checksum=True)
                 file_client.disconnect()
                 
                 if success:
                     self.gui_signals.status_message.emit(f"✓ Downloaded {filename}")
                 else:
-                    self.gui_signals.status_message.emit(
-                        f"Download failed: {filename}"
-                    )
+                    self.gui_signals.status_message.emit(f"Download failed: {filename}")
             except Exception as e:
                 self.gui_signals.status_message.emit(f"Download error: {str(e)}")
         
@@ -1086,70 +1210,66 @@ class ModernCollaborationGUI(QMainWindow):
             self.update_timer.stop()
     
     def cleanup(self):
-        """Cleanup all resources and connections"""
+        """Cleanup all resources and connections - FIXED"""
+        print("Cleaning up resources...")
+        
+        # Stop timers
         try:
             self.update_timer.stop()
             self.video_timer.stop()
         except:
             pass
         
+        # Set all flags to False
         self.video_active = False
         self.audio_active = False
         self.screen_active = False
         
+        # Clean up video
         if self.video_capture:
             try:
                 self.video_capture.release()
-            except:
-                pass
+            except Exception as e:
+                print(f"Error releasing camera: {e}")
         
         if self.video_send_socket:
             try:
                 self.video_send_socket.close()
-            except:
-                pass
+            except Exception as e:
+                print(f"Error closing video send socket: {e}")
         
         if self.video_receive_socket:
             try:
                 self.video_receive_socket.close()
-            except:
-                pass
+            except Exception as e:
+                print(f"Error closing video receive socket: {e}")
         
-        if self.video_streamer:
-            try:
-                self.video_streamer.stop_streaming()
-            except:
-                pass
-        
-        if self.video_receiver:
-            try:
-                self.video_receiver.stop_receiving()
-            except:
-                pass
-        
+        # Clean up audio - gracefully stop first
         if self.audio_streamer:
             try:
+                self.audio_streamer.running = False
+                import time
+                time.sleep(0.1)  # Give it time to stop
                 self.audio_streamer.stop_streaming()
-            except:
-                pass
+            except Exception as e:
+                print(f"Error stopping audio: {e}")
         
-        if self.audio_receiver:
-            try:
-                self.audio_receiver.stop_receiving()
-            except:
-                pass
-        
+        # Clean up screen share
         if self.screen_streamer:
             try:
+                self.screen_streamer.running = False
                 self.screen_streamer.stop_streaming()
-            except:
-                pass
+            except Exception as e:
+                print(f"Error stopping screen share: {e}")
         
+        # Clean up chat
         if self.chat_client:
             try:
                 self.chat_client.disconnect()
-            except:
-                pass
+            except Exception as e:
+                print(f"Error disconnecting chat: {e}")
+        
+        print("Cleanup complete")
     
     def closeEvent(self, event):
         """Handle window close event"""
