@@ -177,7 +177,8 @@ class FileTransferServer:
             # Send acknowledgment
             try:
                 client_socket.sendall(b"OK")
-                time.sleep(0.1)  # Give time for acknowledgment to send
+                client_socket.shutdown(socket.SHUT_WR)  # Signal we're done sending
+                time.sleep(0.5)  # Give time for acknowledgment to send
             except Exception as e:
                 print(f"⚠️  Failed to send acknowledgment: {e}")
             

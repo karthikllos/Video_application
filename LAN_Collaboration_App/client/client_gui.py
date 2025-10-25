@@ -3,8 +3,19 @@ Modern Video Conferencing GUI - Fixed Version
 Fixes: Video broadcast, file transfer acknowledgment, audio termination, error handling
 """
 
+"""
+Modern Video Conferencing GUI - Fixed Version
+"""
+
 import sys
 import os
+
+# FIX: Add project root to path FIRST
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+# Now the rest of your imports
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -18,12 +29,13 @@ from PyQt5.QtWidgets import (
     QFileDialog, QMessageBox, QScrollArea,
     QFrame, QSplitter, QGridLayout
 )
+# ... rest of imports
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer
 from PyQt5.QtGui import QFont, QPalette, QColor, QPixmap, QImage
 import cv2
 import numpy as np
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from shared.constants import (
     SERVER_IP, VIDEO_PORT, AUDIO_PORT, CHAT_PORT, 
@@ -833,6 +845,11 @@ class ModernCollaborationGUI(QMainWindow):
             self.current_frame = None
             self.received_frames.clear()
             
+            # Hide camera icons
+            self.tile_self.cam_icon.hide()
+            for tile in self.user_tiles.values():
+                tile.cam_icon.hide()
+            
             if self.video_capture:
                 try:
                     self.video_capture.release()
@@ -858,7 +875,6 @@ class ModernCollaborationGUI(QMainWindow):
     
     def receive_video_delayed(self):
         """Delayed start for video receiver to avoid conflicts"""
-        import time
         time.sleep(0.5)  # Wait 500ms before starting receiver
         self.receive_video()
     
@@ -906,7 +922,6 @@ class ModernCollaborationGUI(QMainWindow):
                         print(f"Send error: {e}")
                 
                 # Small delay to control frame rate (~30 FPS)
-                import time
                 time.sleep(0.033)
         except Exception as e:
             self.gui_signals.status_message.emit(f"Video error: {str(e)}")
@@ -939,23 +954,25 @@ class ModernCollaborationGUI(QMainWindow):
             
             # Send registration packet
             from shared.helpers import pack_message
-            register_packet = pack_message(VIDEO, b"REGISTER")
-            try:
-                self.video_receive_socket.sendto(register_packet, (self.server_ip, VIDEO_PORT))
-                self.gui_signals.status_message.emit(
-                    f"✓ Video receiver ready on port {local_port}"
-                )
-            except Exception as e:
-                print(f"Registration error: {e}")
+            for _ in range(3):
+                register_packet = pack_message(VIDEO, b"REGISTER")
+                try:
+                    self.video_receive_socket.sendto(register_packet, (self.server_ip, VIDEO_PORT))
+                    time.sleep(0.1)
+                except Exception as e:
+                    print(f"Registration error: {e}")
+
+            self.gui_signals.status_message.emit(
+                f"✓ Video receiver registered"
+            )
             
             try:
                 while self.video_active:
                     try:
                         data, addr = self.video_receive_socket.recvfrom(65536)
                         
-                        # Skip our own packets (check server address)
-                        if addr[0] != self.server_ip:
-                            continue
+                        # Accept all packets from server (server broadcasts to all clients)
+                        # No need to filter by address since server handles the broadcasting
                         
                         try:
                             version, msg_type, payload_length, seq_num, payload = unpack_message(data)
@@ -998,11 +1015,13 @@ class ModernCollaborationGUI(QMainWindow):
                 )
                 pixmap = QPixmap.fromImage(qt_image)
                 self.tile_self.video_label.setPixmap(pixmap)
+                # Show camera icon to indicate video is active
+                self.tile_self.cam_icon.show()
             
             # Update received video frames
             if 'broadcast' in self.received_frames:
                 frame = self.received_frames['broadcast']
-                # Display on first available tile or create new one
+                # Display on first available tile (since server broadcasts to all)
                 if len(self.user_tiles) > 0:
                     first_tile = list(self.user_tiles.values())[0]
                     frame_resized = cv2.resize(frame, (320, 240))
@@ -1014,6 +1033,8 @@ class ModernCollaborationGUI(QMainWindow):
                     )
                     pixmap = QPixmap.fromImage(qt_image)
                     first_tile.video_label.setPixmap(pixmap)
+                    # Show camera icon to indicate video is active
+                    first_tile.cam_icon.show()
         except (RuntimeError, AttributeError):
             pass  # Widget deleted, ignore
     

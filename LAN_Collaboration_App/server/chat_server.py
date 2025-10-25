@@ -127,7 +127,13 @@ class ChatServer:
                                 username = message_text.split(":", 1)[0].strip()
                                 with self.clients_lock:
                                     self.clients[client_socket]['username'] = username
-                                # Broadcast updated user list first
+
+                                # Wait a bit to ensure username is set everywhere
+                                time.sleep(0.05)
+
+
+
+                                # NOW broadcast user list
                                 self._broadcast_user_list()
                             
                             # Broadcast message to ALL clients (including sender for acknowledgment)
